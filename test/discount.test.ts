@@ -32,7 +32,9 @@ describe("loyaltyDiscountRate", () => {
         [3, 0.06],
         [4, 0.06],
         [5, 0.1],
-        [12, 0.1]
+        [9, 0.1],
+        [10, 0.15],
+        [12, 0.15]
     ])("years=%i -> rate=%f", (years, rate) => {
         expect(loyaltyDiscountRate(years)).toBe(rate);
     });
@@ -51,5 +53,10 @@ describe("loyaltyDiscount", () => {
     it("applies the 5-year bracket", () => {
         // 10% of 950 = 95
         expect(loyaltyDiscount({ ...baseReq, loyaltyYears: 7 })).toBe(95);
+    });
+
+    it("applies the 10-year long-tenure bracket", () => {
+        // 15% of 950 = 142.5
+        expect(loyaltyDiscount({ ...baseReq, loyaltyYears: 11 })).toBe(142.5);
     });
 });

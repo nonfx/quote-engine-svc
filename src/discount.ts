@@ -12,10 +12,13 @@ export function noClaimsDiscount(req: QuoteRequest): number {
 
 /**
  * Multi-tier loyalty bonus (added by the loyalty-discount feature).
- * Brackets, not linear: the value of retention steps up at the 3- and 5-year
- * marks rather than accruing smoothly, matching how the retention team models it.
+ * Brackets, not linear: the value of retention steps up at the 3-, 5- and
+ * 10-year marks rather than accruing smoothly, matching how the retention
+ * team models it. The 10-year "long-tenure" bracket rewards the customers
+ * with the lowest churn risk and the lowest claims frequency.
  */
 export function loyaltyDiscountRate(loyaltyYears: number): number {
+    if (loyaltyYears >= 10) return 0.15;
     if (loyaltyYears >= 5) return 0.1;
     if (loyaltyYears >= 3) return 0.06;
     if (loyaltyYears >= 1) return 0.03;

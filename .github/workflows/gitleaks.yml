@@ -6,4 +6,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      # gitleaks/gitleaks-action@v2 now requires a paid licence for organisation
+      # repos. gitleaks itself is MIT/OSS, so we run the pinned release binary
+      # directly to keep the secret-scan free while preserving the `gitleaks`
+      # workflow + job/check name the governance scanner matches on.
+      - name: Run gitleaks
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks version
+          ./gitleaks detect --source . --redact --verbose --exit-code 1

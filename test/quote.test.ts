@@ -33,10 +33,10 @@ describe("calculateQuote", () => {
         ]);
     });
 
-    it("stays at or above the regulatory floor under the deepest discount", () => {
+    it("clamps to the regulatory floor under the deepest discount", () => {
         // Cheapest base (basic/compact = 540) with both discounts maxed:
-        // no-claims caps at 50% (270) + loyalty 10% (54) -> gross 216, which is still
-        // above the 200 floor. So the floor does not fire, but the result is guarded.
+        // no-claims caps at 50% (270) + the 10-year loyalty bracket 15% (81) -> gross 189,
+        // which falls below the 200 floor, so the floor adjustment brings it back up to 200.
         const q = calculateQuote({
             ...baseReq,
             coverageTier: "basic",
@@ -44,8 +44,8 @@ describe("calculateQuote", () => {
             yearsClaimFree: 30,
             loyaltyYears: 10
         });
-        expect(q.finalPremium).toBe(216);
-        expect(q.finalPremium).toBeGreaterThanOrEqual(PREMIUM_FLOOR);
+        expect(q.finalPremium).toBe(PREMIUM_FLOOR);
+        expect(q.lineItems.some((li) => li.label === "Regulatory floor adjustment")).toBe(true);
     });
 
     it("propagates validation errors", () => {

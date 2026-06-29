@@ -92,6 +92,13 @@ jobs:
             jq -r '.severity_counters | to_entries[] | "| \(.key) | \(.value) |"' kics-results.json
             echo ""
             echo "**Total:** $(jq -r '.total_counter' kics-results.json) finding(s) across **$(jq -r '[.queries[].query_id]|unique|length' kics-results.json)** distinct controls. One comment per broken control follows."
+            echo ""
+            hc=$(jq -r '(.severity_counters.HIGH // 0) + (.severity_counters.CRITICAL // 0)' kics-results.json)
+            if [ "$hc" -gt 0 ]; then
+              echo "**Gate:** ❌ FAIL — ${hc} HIGH/CRITICAL control(s) broken (LOW/MEDIUM allowed)."
+            else
+              echo "**Gate:** ✅ PASS — no HIGH/CRITICAL controls broken."
+            fi
           } > _summary.md
           gh pr comment "${PR}" --body-file _summary.md
 

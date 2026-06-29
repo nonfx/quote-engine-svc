@@ -51,7 +51,7 @@ jobs:
           echo "[scan] parsed inventory (denominator): $(jq '[.document[]?.resource // {} | .[] | keys[]] | length' kics-payload.json) resource(s)"
 
           if [ "${KICS_EXIT}" -ne 0 ]; then
-            echo "::error::KICS scan failed — findings detected (exit ${KICS_EXIT})."
+            echo "::error::KICS scan failed: findings detected (exit ${KICS_EXIT})."
             exit "${KICS_EXIT}"
           fi
 

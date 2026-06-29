@@ -82,10 +82,13 @@ jobs:
             CRITICAL) echo "🟣";; HIGH) echo "🔴";; MEDIUM) echo "🟠";;
             LOW) echo "🟡";; INFO) echo "⚪";; *) echo "⚫";; esac; }
 
+          KICS_VER=$(jq -r '.kics_version // "v2.1.20"' kics-results.json)
+
           # Header summary comment.
           {
             echo "<!-- kics-demo:summary -->"
-            echo "## 🔎 KICS IaC scan — \`${TF_PATH}\`"
+            echo "## 🛡️ Checkmarx KICS — IaC scan of \`${TF_PATH}\`"
+            echo "_Reported by **Checkmarx KICS** \`${KICS_VER}\`_"
             echo ""
             echo "| Severity | Count |"
             echo "|---|---|"
@@ -129,6 +132,8 @@ jobs:
               echo "|---|---|---|---|"
               echo "$q" | jq -r '.files[:25][] | "| `\(.resource_type // "?").\(.resource_name // "?")` | `\(.file_name):\(.line)` | \(.expected_value // "-" | gsub("\\|";"\\\\|")) | \(.actual_value // "-" | gsub("\\|";"\\\\|")) |"'
               [ "$nloc" -gt 25 ] && echo "" && echo "_…and $((nloc - 25)) more location(s)._"
+              echo ""
+              echo "<sub>🛡️ Reported by Checkmarx KICS \`${KICS_VER}\`</sub>"
             } > _c.md
             gh pr comment "${PR}" --body-file _c.md
           done

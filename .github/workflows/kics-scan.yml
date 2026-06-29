@@ -1,37 +1,39 @@
-# KICS IaC scan of the GCP terraform — GitHub Actions port of the Jenkins
-# "Security Scan (KICS IaC)" stage (originally in the stance jenkins-venue
-# -integration demo). Same pinned scanner (checkmarx/kics:v2.1.20), same flags,
-# same console output. Stance evidence-ingest and the deploy gate are
-# intentionally omitted — this only runs the scan and reports findings.
-name: KICS IaC Scan
+# KICS IaC scan of quote-engine-infra (GCP terraform).
+# Ported from the Jenkins "Security Scan (KICS IaC)" stage, extended to post one
+# PR comment per UNIQUE control (KICS query) it finds, with where it breaks
+# (file:line, expected vs actual). The terraform is a deliberate MIX of compliant
+# and non-compliant resources, so results are a mix bag. The job passes on
+# LOW/MEDIUM-only findings and fails when a HIGH or CRITICAL control breaks.
+name: KICS IaC Scan (quote-engine-infra)
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "infra/**"
+      - "quote-engine-infra/**"
       - ".github/workflows/kics-scan.yml"
   pull_request:
     paths:
-      - "infra/**"
+      - "quote-engine-infra/**"
       - ".github/workflows/kics-scan.yml"
 
 env:
-  TF_PATH: infra
+  TF_PATH: quote-engine-infra
+  FAIL_ON: "HIGH CRITICAL" # severities that turn the build red; others pass (mix bag)
 
 jobs:
   kics:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post per-control PR comments
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Real KICS scan. KICS exits non-zero on findings (severity bitmask).
-      # We capture that code, print the summary, then propagate it so the job
-      # FAILS when issues are found. The pinned image bundles its queries/
-      # libraries, so no network at scan time. --payload-path dumps the
-      # parsed-resource inventory (the DENOMINATOR): KICS reports failures only,
-      # so passes are derived from it.
+      # Real KICS scan. KICS exits non-zero on findings; we capture the code,
+      # never let it abort the job here (gating happens at the end). The pinned
+      # image bundles its queries/libraries, so no network at scan time.
       - name: Security Scan (KICS IaC)
         run: |
           set -u
@@ -43,17 +45,80 @@ jobs:
             --output-name kics-results \
             --payload-path kics-payload.json \
             --no-progress \
-            --no-color && KICS_EXIT=0 || KICS_EXIT=$?
+            --no-color || true
 
           echo "[scan] KICS findings by severity:"
           jq -r '.severity_counters | to_entries[] | "  \(.key): \(.value)"' kics-results.json
           echo "[scan] total: $(jq -r '.total_counter' kics-results.json) finding(s)"
+          echo "[scan] distinct controls broken: $(jq -r '[.queries[].query_id] | unique | length' kics-results.json)"
           echo "[scan] parsed inventory (denominator): $(jq '[.document[]?.resource // {} | .[] | keys[]] | length' kics-payload.json) resource(s)"
 
-          if [ "${KICS_EXIT}" -ne 0 ]; then
-            echo "::error::KICS scan failed: findings detected (exit ${KICS_EXIT})."
-            exit "${KICS_EXIT}"
-          fi
+      # One comment per UNIQUE control (KICS query), listing where it breaks.
+      # Re-runs upsert: old demo comments (tagged with a hidden marker) are
+      # deleted first so the PR doesn't accumulate duplicates.
+      - name: Comment broken controls on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+
+          # Wipe previous KICS demo comments on this PR.
+          gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            -q '.[] | select(.body | startswith("<!-- kics-demo")) | .id' \
+          | while read -r id; do
+              [ -n "$id" ] && gh api -X DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null || true
+            done
+
+          emoji() { case "$1" in
+            CRITICAL) echo "🟣";; HIGH) echo "🔴";; MEDIUM) echo "🟠";;
+            LOW) echo "🟡";; INFO) echo "⚪";; *) echo "⚫";; esac; }
+
+          # Header summary comment.
+          {
+            echo "<!-- kics-demo:summary -->"
+            echo "## 🔎 KICS IaC scan — \`${TF_PATH}\`"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            jq -r '.severity_counters | to_entries[] | "| \(.key) | \(.value) |"' kics-results.json
+            echo ""
+            echo "**Total:** $(jq -r '.total_counter' kics-results.json) finding(s) across **$(jq -r '[.queries[].query_id]|unique|length' kics-results.json)** distinct controls. One comment per broken control follows."
+          } > _summary.md
+          gh pr comment "${PR}" --body-file _summary.md
+
+          # One comment per unique control. Cap at 50 controls / 25 locations each.
+          COUNT=$(jq -r '.queries | length' kics-results.json)
+          MAX=50
+          [ "$COUNT" -gt "$MAX" ] && echo "::warning::$COUNT controls broken; commenting first $MAX."
+          for i in $(seq 0 $((COUNT - 1))); do
+            [ "$i" -ge "$MAX" ] && break
+            q=$(jq -c ".queries[$i]" kics-results.json)
+            name=$(echo "$q" | jq -r '.query_name')
+            qid=$(echo "$q"  | jq -r '.query_id')
+            sev=$(echo "$q"  | jq -r '.severity')
+            desc=$(echo "$q" | jq -r '.description // ""')
+            cat=$(echo "$q"  | jq -r '.category // "-"')
+            nloc=$(echo "$q" | jq -r '.files | length')
+            {
+              echo "<!-- kics-demo:${qid} -->"
+              echo "### $(emoji "$sev") ${name}"
+              echo ""
+              echo "**Severity:** ${sev} · **Category:** ${cat} · **Locations:** ${nloc} · **Query ID:** \`${qid}\`"
+              echo ""
+              echo "> ${desc}"
+              echo ""
+              echo "**Where it breaks:**"
+              echo ""
+              echo "| Resource | File:Line | Expected | Actual |"
+              echo "|---|---|---|---|"
+              echo "$q" | jq -r '.files[:25][] | "| `\(.resource_type // "?").\(.resource_name // "?")` | `\(.file_name):\(.line)` | \(.expected_value // "-" | gsub("\\|";"\\\\|")) | \(.actual_value // "-" | gsub("\\|";"\\\\|")) |"'
+              [ "$nloc" -gt 25 ] && echo "" && echo "_…and $((nloc - 25)) more location(s)._"
+            } > _c.md
+            gh pr comment "${PR}" --body-file _c.md
+          done
 
       - name: Upload KICS results
         if: always()
@@ -63,3 +128,20 @@ jobs:
           path: |
             kics-results.json
             kics-payload.json
+
+      # Mix-bag gate: pass on LOW/MEDIUM-only, fail when a HIGH/CRITICAL breaks.
+      - name: Gate on high-severity controls
+        if: always()
+        run: |
+          set -eu
+          fail=0
+          for sev in ${FAIL_ON}; do
+            n=$(jq -r --arg s "$sev" '.severity_counters[$s] // 0' kics-results.json)
+            echo "  ${sev}: ${n}"
+            fail=$((fail + n))
+          done
+          if [ "$fail" -gt 0 ]; then
+            echo "::error::KICS gate failed: ${fail} HIGH/CRITICAL control(s) broken (LOW/MEDIUM allowed)."
+            exit 1
+          fi
+          echo "KICS gate passed: no HIGH/CRITICAL controls broken."

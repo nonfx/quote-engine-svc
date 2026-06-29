@@ -1,0 +1,59 @@
+# KICS IaC scan of the GCP terraform — GitHub Actions port of the Jenkins
+# "Security Scan (KICS IaC)" stage (originally in the stance jenkins-venue
+# -integration demo). Same pinned scanner (checkmarx/kics:v2.1.20), same flags,
+# same console output. Stance evidence-ingest and the deploy gate are
+# intentionally omitted — this only runs the scan and reports findings.
+name: KICS IaC Scan
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "infra/**"
+      - ".github/workflows/kics-scan.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/kics-scan.yml"
+
+env:
+  TF_PATH: infra
+
+jobs:
+  kics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Real KICS scan. KICS exits non-zero on findings (severity bitmask) —
+      # expected, so swallow it; finding issues is not a build failure here.
+      # The pinned image bundles its queries/libraries, so no network at scan time.
+      # --payload-path dumps the parsed-resource inventory (the DENOMINATOR):
+      # KICS reports failures only, so passes are derived from it.
+      - name: Security Scan (KICS IaC)
+        run: |
+          set -eu
+          docker run --rm -v "$PWD:/work" -w /work checkmarx/kics:v2.1.20 scan \
+            --path "${TF_PATH}" \
+            --experimental-queries \
+            --report-formats json \
+            --output-path . \
+            --output-name kics-results \
+            --payload-path kics-payload.json \
+            --no-progress \
+            --no-color || true
+
+          echo "[scan] KICS findings by severity:"
+          jq -r '.severity_counters | to_entries[] | "  \(.key): \(.value)"' kics-results.json
+          echo "[scan] total: $(jq -r '.total_counter' kics-results.json) finding(s)"
+          echo "[scan] parsed inventory (denominator): $(jq '[.document[]?.resource // {} | .[] | keys[]] | length' kics-payload.json) resource(s)"
+
+      - name: Upload KICS results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kics-results
+          path: |
+            kics-results.json
+            kics-payload.json

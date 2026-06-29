@@ -17,6 +17,12 @@ on:
       - "quote-engine-infra/**"
       - ".github/workflows/kics-scan.yml"
 
+# Cancel an older in-flight run for the same PR/ref so concurrent runs don't
+# double-post the per-control comments.
+concurrency:
+  group: kics-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   TF_PATH: quote-engine-infra
   FAIL_ON: "HIGH CRITICAL" # severities that turn the build red; others pass (mix bag)

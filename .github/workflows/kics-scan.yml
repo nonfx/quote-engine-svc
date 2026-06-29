@@ -26,14 +26,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Real KICS scan. KICS exits non-zero on findings (severity bitmask) —
-      # expected, so swallow it; finding issues is not a build failure here.
-      # The pinned image bundles its queries/libraries, so no network at scan time.
-      # --payload-path dumps the parsed-resource inventory (the DENOMINATOR):
-      # KICS reports failures only, so passes are derived from it.
+      # Real KICS scan. KICS exits non-zero on findings (severity bitmask).
+      # We capture that code, print the summary, then propagate it so the job
+      # FAILS when issues are found. The pinned image bundles its queries/
+      # libraries, so no network at scan time. --payload-path dumps the
+      # parsed-resource inventory (the DENOMINATOR): KICS reports failures only,
+      # so passes are derived from it.
       - name: Security Scan (KICS IaC)
         run: |
-          set -eu
+          set -u
           docker run --rm -v "$PWD:/work" -w /work checkmarx/kics:v2.1.20 scan \
             --path "${TF_PATH}" \
             --experimental-queries \
@@ -42,12 +43,17 @@ jobs:
             --output-name kics-results \
             --payload-path kics-payload.json \
             --no-progress \
-            --no-color || true
+            --no-color && KICS_EXIT=0 || KICS_EXIT=$?
 
           echo "[scan] KICS findings by severity:"
           jq -r '.severity_counters | to_entries[] | "  \(.key): \(.value)"' kics-results.json
           echo "[scan] total: $(jq -r '.total_counter' kics-results.json) finding(s)"
           echo "[scan] parsed inventory (denominator): $(jq '[.document[]?.resource // {} | .[] | keys[]] | length' kics-payload.json) resource(s)"
+
+          if [ "${KICS_EXIT}" -ne 0 ]; then
+            echo "::error::KICS scan failed — findings detected (exit ${KICS_EXIT})."
+            exit "${KICS_EXIT}"
+          fi
 
       - name: Upload KICS results
         if: always()

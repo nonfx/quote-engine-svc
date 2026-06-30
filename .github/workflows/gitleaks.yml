@@ -25,8 +25,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history so the diff range can be scanned
 
       - name: Install gitleaks
         run: |
@@ -36,13 +34,12 @@ jobs:
             | sudo tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
-      # Scan only the commits introduced by this PR (base..head). gitleaks exits
-      # non-zero when it finds leaks; capture the code, gate at the end.
-      - name: Scan PR changes for secrets
+      # Scan the current working tree (files on disk), not git history. The PR
+      # may add then later remove files; history scanning would flag secrets in
+      # deleted files. --no-git scans what the PR actually ships. gitleaks exits
+      # non-zero when it finds leaks; capture the code and gate at the end.
+      - name: Scan working tree for secrets
         id: scan
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -u
           # gitleaks exits non-zero when leaks are found; disable -e (GitHub's
@@ -50,7 +47,7 @@ jobs:
           set +e
           gitleaks detect \
             --source . \
-            --log-opts "${BASE}..${HEAD}" \
+            --no-git \
             --report-format json \
             --report-path gitleaks-results.json \
             --redact \
@@ -85,16 +82,16 @@ jobs:
           {
             echo "<!-- gitleaks-scan -->"
             echo "## 🔐 gitleaks — secret scan of PR changes"
-            echo "_Reported by **gitleaks** \`v${GITLEAKS_VERSION}\` · scanned commits \`base..head\`_"
+            echo "_Reported by **gitleaks** \`v${GITLEAKS_VERSION}\` · scanned the working tree on this PR_"
             echo ""
             if [ "${LEAKS}" -gt 0 ]; then
-              echo "**Result:** ❌ FAIL — ${LEAKS} potential secret(s) found in the diff."
+              echo "**Result:** ❌ FAIL — ${LEAKS} potential secret(s) found."
               echo ""
-              echo "| Rule | File:Line | Commit |"
-              echo "|---|---|---|"
-              jq -r '.[] | "| \(.RuleID) | `\(.File):\(.StartLine)` | `\(.Commit[0:8])` |"' gitleaks-results.json
+              echo "| Rule | File:Line |"
+              echo "|---|---|"
+              jq -r '.[] | "| \(.RuleID) | `\(.File):\(.StartLine)` |"' gitleaks-results.json
               echo ""
-              echo "_Secret values are redacted. Rotate any exposed credential and remove it from history._"
+              echo "_Secret values are redacted. Rotate any exposed credential and remove it from the code._"
             else
               echo "**Result:** ✅ PASS — no secrets detected in the PR changes."
             fi

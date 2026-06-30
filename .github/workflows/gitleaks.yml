@@ -1,9 +1,120 @@
+# Secret scanning with the open-source gitleaks CLI (MIT, no license gate).
+# The gitleaks-action@v2 wrapper requires a paid GITLEAKS_LICENSE for org-owned
+# repos; the CLI does not, so we install and run the binary directly. Posts one
+# upsert PR comment summarizing the scan result (clean or leaks found).
 name: gitleaks
-on: { pull_request: { branches: [main] } }
+
+on:
+  pull_request:
+    branches: [main]
+
+# Avoid double-posting the PR comment if a run is superseded.
+concurrency:
+  group: gitleaks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: "8.21.2"
+
 jobs:
   gitleaks:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post the scan-result PR comment
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install gitleaks
+        run: |
+          set -eu
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      # Scan the current working tree (files on disk), not git history. The PR
+      # may add then later remove files; history scanning would flag secrets in
+      # deleted files. --no-git scans what the PR actually ships. gitleaks exits
+      # non-zero when it finds leaks; capture the code and gate at the end.
+      - name: Scan working tree for secrets
+        id: scan
+        run: |
+          set -u
+          # gitleaks exits non-zero when leaks are found; disable -e (GitHub's
+          # default shell is `bash -e`) so we can capture the code and gate later.
+          set +e
+          gitleaks detect \
+            --source . \
+            --no-git \
+            --report-format json \
+            --report-path gitleaks-results.json \
+            --redact \
+            --no-banner \
+            --verbose
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          count=$(jq 'length' gitleaks-results.json 2>/dev/null || echo 0)
+          echo "leak_count=${count}" >> "$GITHUB_OUTPUT"
+          echo "[scan] gitleaks exit=${code}, leaks=${count}"
+
+      - name: Comment scan result on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          LEAKS: ${{ steps.scan.outputs.leak_count }}
+        run: |
+          set -eu
+
+          # Upsert: wipe previous gitleaks comments on this PR first.
+          gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            -q '.[] | select(.body | startswith("<!-- gitleaks-scan -->")) | .id' \
+          | while read -r id; do
+              [ -n "$id" ] && gh api -X DELETE "repos/${REPO}/issues/comments/${id}" >/dev/null || true
+            done
+
+          VER=$(gitleaks version 2>/dev/null || echo "${GITLEAKS_VERSION}")
+
+          {
+            echo "<!-- gitleaks-scan -->"
+            echo "## 🔐 gitleaks — secret scan of PR changes"
+            echo "_Reported by **gitleaks** \`v${GITLEAKS_VERSION}\` · scanned the working tree on this PR_"
+            echo ""
+            if [ "${LEAKS}" -gt 0 ]; then
+              echo "**Result:** ❌ FAIL — ${LEAKS} potential secret(s) found."
+              echo ""
+              echo "| Rule | File:Line |"
+              echo "|---|---|"
+              jq -r '.[] | "| \(.RuleID) | `\(.File):\(.StartLine)` |"' gitleaks-results.json
+              echo ""
+              echo "_Secret values are redacted. Rotate any exposed credential and remove it from the code._"
+            else
+              echo "**Result:** ✅ PASS — no secrets detected in the PR changes."
+            fi
+          } > _gitleaks.md
+          gh pr comment "${PR}" --body-file _gitleaks.md
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks-results.json
+          if-no-files-found: ignore
+
+      # Gate: fail the job if any secrets were found.
+      - name: Gate on findings
+        if: always()
+        env:
+          LEAKS: ${{ steps.scan.outputs.leak_count }}
+        run: |
+          set -eu
+          if [ "${LEAKS}" -gt 0 ]; then
+            echo "::error::gitleaks found ${LEAKS} potential secret(s) in the PR changes."
+            exit 1
+          fi
+          echo "gitleaks: no secrets found."

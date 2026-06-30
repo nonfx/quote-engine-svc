@@ -28,14 +28,15 @@ resource "google_bigquery_dataset" "analytics_compliant" {
   labels = var.labels
 }
 
-# NON-COMPLIANT: dataset readable by allAuthenticatedUsers (public).
+# PARTIALLY-COMPLIANT: no longer public (scoped to a group), but still missing
+# CMEK default encryption (MEDIUM finding remains).
 resource "google_bigquery_dataset" "public_legacy" {
   dataset_id = "qe_public_legacy"
   location   = "US"
 
   access {
-    role          = "READER"
-    special_group = "allAuthenticatedUsers"
+    role           = "READER"
+    group_by_email = "platform-team@example.com"
   }
 
   access {
@@ -44,11 +45,11 @@ resource "google_bigquery_dataset" "public_legacy" {
   }
 }
 
-# NON-COMPLIANT: a second public dataset readable by allUsers via IAM member.
+# PARTIALLY-COMPLIANT: scoped to the app service account instead of allUsers.
 resource "google_bigquery_dataset_iam_member" "exports_public" {
   dataset_id = google_bigquery_dataset.public_legacy.dataset_id
   role       = "roles/bigquery.dataViewer"
-  member     = "allUsers"
+  member     = "serviceAccount:${google_service_account.quote_app_compliant.email}"
 }
 
 # COMPLIANT: scoped table access for the app SA.

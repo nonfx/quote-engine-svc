@@ -56,21 +56,23 @@ resource "google_storage_bucket" "tfstate_compliant" {
   }
 }
 
-# NON-COMPLIANT: no logging, no versioning, fine-grained ACLs, public allowed.
+# PARTIALLY-COMPLIANT: uniform bucket-level access on, but still no logging,
+# no versioning and force_destroy enabled (MEDIUM/LOW findings remain).
 resource "google_storage_bucket" "exports_legacy" {
   name                        = "qe-quote-exports-legacy"
   location                    = "US"
   force_destroy               = true
-  uniform_bucket_level_access = false
+  uniform_bucket_level_access = true
   public_access_prevention    = "inherited"
 }
 
-# NON-COMPLIANT: scratch bucket, no versioning / logging, fine-grained.
+# PARTIALLY-COMPLIANT: uniform bucket-level access on, but no versioning /
+# logging (MEDIUM/LOW findings remain).
 resource "google_storage_bucket" "scratch_legacy" {
   name                        = "qe-scratch-legacy"
   location                    = "US"
   force_destroy               = true
-  uniform_bucket_level_access = false
+  uniform_bucket_level_access = true
 }
 
 # NON-COMPLIANT: grants allUsers read on the exports bucket (anonymous/public).

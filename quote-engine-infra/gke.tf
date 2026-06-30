@@ -98,12 +98,9 @@ resource "google_container_cluster" "qe_legacy_insecure" {
     enabled = false
   }
 
-  enable_legacy_abac = true
+  enable_legacy_abac = false
 
   master_auth {
-    username = "admin"
-    password = "ChangeMe-Demo-123!"
-
     client_certificate_config {
       issue_client_certificate = true
     }

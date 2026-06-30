@@ -95,7 +95,7 @@ resource "google_compute_firewall" "ssh_open" {
   source_ranges = ["0.0.0.0/0"]
 }
 
-# NON-COMPLIANT: RDP (3389) open to the world.
+# PARTIALLY-COMPLIANT: RDP (3389) no longer world-open; scoped to internal CIDR.
 resource "google_compute_firewall" "rdp_open" {
   name      = "qe-allow-rdp-anywhere"
   network   = google_compute_network.core_compliant.id
@@ -106,10 +106,11 @@ resource "google_compute_firewall" "rdp_open" {
     ports    = ["3389"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.10.0.0/20"]
 }
 
-# NON-COMPLIANT: all protocols/ports open to the world.
+# PARTIALLY-COMPLIANT: broad protocol allow, but scoped to an internal CIDR
+# instead of the public internet (no longer exposes RDP/SSH to the world).
 resource "google_compute_firewall" "all_open" {
   name      = "qe-allow-all-ingress"
   network   = google_compute_network.legacy_auto.id
@@ -119,7 +120,7 @@ resource "google_compute_firewall" "all_open" {
     protocol = "all"
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.20.0.0/20"]
 }
 
 # COMPLIANT: SSH allowed only from the IAP forwarding range.

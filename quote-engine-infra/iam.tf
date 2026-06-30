@@ -80,10 +80,11 @@ resource "google_project_iam_member" "user_direct_admin" {
   member  = "user:contractor@example.com"
 }
 
-# NON-COMPLIANT: service account token creator (privilege escalation path).
+# PARTIALLY-COMPLIANT: dropped the token-creator escalation path; narrowed to a
+# read-only viewer role (the broad owner/editor bindings above remain as MEDIUM).
 resource "google_project_iam_member" "legacy_token_creator" {
   project = var.project_id
-  role    = "roles/iam.serviceAccountTokenCreator"
+  role    = "roles/logging.viewer"
   member  = "serviceAccount:${google_service_account.legacy_admin.email}"
 }
 

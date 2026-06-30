@@ -45,6 +45,9 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -u
+          # gitleaks exits non-zero when leaks are found; disable -e (GitHub's
+          # default shell is `bash -e`) so we can capture the code and gate later.
+          set +e
           gitleaks detect \
             --source . \
             --log-opts "${BASE}..${HEAD}" \
@@ -54,11 +57,11 @@ jobs:
             --no-banner \
             --verbose
           code=$?
+          set -e
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
           count=$(jq 'length' gitleaks-results.json 2>/dev/null || echo 0)
           echo "leak_count=${count}" >> "$GITHUB_OUTPUT"
           echo "[scan] gitleaks exit=${code}, leaks=${count}"
-          exit 0
 
       - name: Comment scan result on PR
         if: github.event_name == 'pull_request'

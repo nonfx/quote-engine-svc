@@ -84,26 +84,44 @@ jobs:
 
           KICS_VER=$(jq -r '.kics_version // "v2.1.20"' kics-results.json)
 
+          hc=$(jq -r '(.severity_counters.HIGH // 0) + (.severity_counters.CRITICAL // 0)' kics-results.json)
+          total=$(jq -r '.total_counter' kics-results.json)
+          controls=$(jq -r '[.queries[].query_id]|unique|length' kics-results.json)
+
           # Header summary comment.
           {
             echo "<!-- kics-demo:summary -->"
             echo "## 🛡️ Checkmarx KICS — IaC scan of \`${TF_PATH}\`"
             echo "_Reported by **Checkmarx KICS** \`${KICS_VER}\`_"
             echo ""
+            if [ "$hc" -eq 0 ]; then
+              # Clean run: clear top-level pass message, no per-control noise.
+              echo "## ✅ Security check complete — no CRITICAL or HIGH issues found"
+              echo ""
+              echo "The IaC scan passed the security gate. Only MEDIUM/LOW findings remain, which are informational and allowed by policy."
+              echo ""
+            fi
             echo "| Severity | Count |"
             echo "|---|---|"
             jq -r '.severity_counters | to_entries[] | "| \(.key) | \(.value) |"' kics-results.json
             echo ""
-            echo "**Total:** $(jq -r '.total_counter' kics-results.json) finding(s) across **$(jq -r '[.queries[].query_id]|unique|length' kics-results.json)** distinct controls. One comment per broken control follows."
-            echo ""
-            hc=$(jq -r '(.severity_counters.HIGH // 0) + (.severity_counters.CRITICAL // 0)' kics-results.json)
             if [ "$hc" -gt 0 ]; then
+              echo "**Total:** ${total} finding(s) across **${controls}** distinct controls. One comment per broken control follows."
+              echo ""
               echo "**Gate:** ❌ FAIL — ${hc} HIGH/CRITICAL control(s) broken (LOW/MEDIUM allowed)."
             else
-              echo "**Gate:** ✅ PASS — no HIGH/CRITICAL controls broken."
+              echo "**Total:** ${total} finding(s) across **${controls}** distinct controls, all MEDIUM/LOW."
+              echo ""
+              echo "**Gate:** ✅ PASS — no CRITICAL or HIGH issues found. Pipeline passing."
             fi
           } > _summary.md
           gh pr comment "${PR}" --body-file _summary.md
+
+          # No HIGH/CRITICAL: stop here with just the top-level pass comment.
+          if [ "$hc" -eq 0 ]; then
+            echo "[comment] no HIGH/CRITICAL — posted single pass summary, skipping per-control comments."
+            exit 0
+          fi
 
           # One comment per unique control. Cap at 50 controls / 25 locations each.
           COUNT=$(jq -r '.queries | length' kics-results.json)
